@@ -36,6 +36,8 @@ public class SpringSecurityJwtApplication {
 
 }
 
+// 4. add jjwt dependency to pom.xml that lets you create and validate JWT token
+
 @RestController
 class HelloWorldController {
 
@@ -53,9 +55,12 @@ class HelloWorldController {
 		return "Hello World";
 	}
 
+    // 6. To get rid of form login which redirects user to the resources and maintains the session internally, lets replace that with JWT token and also don't maintain the session instead the subsequent calls will pass JWT in their Authorization header.
+    // 7. create beans for holding the AuthenticationRequest and AuthenticationResponse
+    // 8. In order to authenticate, we need a handle on AuthenticationManager, autowired above.
 	@RequestMapping(value = "/authenticate", method = RequestMethod.POST)
 	public ResponseEntity<?> createAuthenticationToken(@RequestBody AuthenticationRequest authenticationRequest) throws Exception {
-
+        // 9. authenticate using standard UsernamePasswordAuthenticationToken for our username_pass
 		try {
 			authenticationManager.authenticate(
 					new UsernamePasswordAuthenticationToken(authenticationRequest.getUsername(), authenticationRequest.getPassword())
@@ -65,10 +70,12 @@ class HelloWorldController {
 			throw new Exception("Incorrect username or password", e);
 		}
 
-
+        // 10. to generate JWT token, we need to have UserDetails in hand, let's get that from the UDService
 		final UserDetails userDetails = userDetailsService
 				.loadUserByUsername(authenticationRequest.getUsername());
 
+        // 11. generate JWT token using the UD.
+        // 12. and finally, we have to make sure that spring security doesn't put authentication wrapper around "/authenticate" itself. let's tell spring security not to do that.
 		final String jwt = jwtTokenUtil.generateToken(userDetails);
 
 		return ResponseEntity.ok(new AuthenticationResponse(jwt));
@@ -85,14 +92,19 @@ class WebSecurityConfig extends WebSecurityConfigurerAdapter {
 
 	@Autowired
 	public void configureGlobal(AuthenticationManagerBuilder auth) throws Exception {
+        // 1. let spring security use the user details service to fetch and authenticate the user
 		auth.userDetailsService(myUserDetailsService);
 	}
 
 	@Bean
 	public PasswordEncoder passwordEncoder() {
+        // 3. spring wants you to expose a PasswordEncoder to its context, lets do that with plain encoded tho, lol
+        // till this point, the application will work with username_pass authentication without JWT for foo/foo
 		return NoOpPasswordEncoder.getInstance();
 	}
 
+    // 14. from spring boot 2.0, we have to explicitly expose the AuthenticationManager bean
+    // till this point, the app will give you the JWT token on hitting /authenticate API but it won't work if you use it in the subsequent calls. let's do that with JwtRequestFilter.
 	@Override
 	@Bean
 	public AuthenticationManager authenticationManagerBean() throws Exception {
@@ -102,11 +114,13 @@ class WebSecurityConfig extends WebSecurityConfigurerAdapter {
 	@Override
 	protected void configure(HttpSecurity httpSecurity) throws Exception {
 		httpSecurity.csrf().disable()
-				.authorizeRequests().antMatchers("/authenticate").permitAll().
+				.authorizeRequests().antMatchers("/authenticate").permitAll(). // 13. let anybody call /authenticate without authenticating and not any other request tho.
 						anyRequest().authenticated().and().
 						exceptionHandling().and().sessionManagement()
-				.sessionCreationPolicy(SessionCreationPolicy.STATELESS);
-		httpSecurity.addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class);
+				.sessionCreationPolicy(SessionCreationPolicy.STATELESS); // 18. STATELESS otherwise once authenticated spring maintains the session for future intereaction which we don't want instead we will trigger subsequent calls with the jwt token generated in the very first call
+                
+		// 19. if spring security is not creating a session then there needs to be something that works for each request and sets up security context each time. thats where this line comes in.
+        httpSecurity.addFilterBefore(jwtRequestFilter, UsernamePasswordAuthenticationFilter.class); 
 
 	}
 
